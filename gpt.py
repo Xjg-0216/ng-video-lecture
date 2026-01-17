@@ -2,17 +2,17 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-# hyperparameters
-batch_size = 64 # how many independent sequences will we process in parallel?
-block_size = 256 # what is the maximum context length for predictions?
-max_iters = 5000
-eval_interval = 500
-learning_rate = 3e-4
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-eval_iters = 200
-n_embd = 384
-n_head = 6
-n_layer = 6
+# 超参数
+batch_size = 64 # 并行数量
+block_size = 256 # 上下文长度
+max_iters = 5000 # 训练迭代次数
+eval_interval = 500 # 验证间隔
+learning_rate = 3e-4 # 学习率
+device = 'cuda' if torch.cuda.is_available() else 'cpu' 
+eval_iters = 200 
+n_embd = 384 # token维度
+n_head = 6 # 多头注意力个数
+n_layer = 6 # transformer个数
 dropout = 0.2
 # ------------
 
@@ -65,11 +65,11 @@ class Head(nn.Module):
     """ one head of self-attention """
 
     def __init__(self, head_size):
-        super().__init__()
-        self.key = nn.Linear(n_embd, head_size, bias=False)
-        self.query = nn.Linear(n_embd, head_size, bias=False)
-        self.value = nn.Linear(n_embd, head_size, bias=False)
-        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        super().__init__() # 把同一个输入投影到多个子空间，在每个子空间里各算一次注意力
+        self.key = nn.Linear(n_embd, head_size, bias=False) # (384, 64)
+        self.query = nn.Linear(n_embd, head_size, bias=False) # (384, 64)
+        self.value = nn.Linear(n_embd, head_size, bias=False) # (384, 64)
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size))) # 下三角掩码
 
         self.dropout = nn.Dropout(dropout)
 
@@ -124,7 +124,7 @@ class Block(nn.Module):
     def __init__(self, n_embd, n_head):
         # n_embd: embedding dimension, n_head: the number of heads we'd like
         super().__init__()
-        head_size = n_embd // n_head
+        head_size = n_embd // n_head # 每个头的维度 
         self.sa = MultiHeadAttention(n_head, head_size)
         self.ffwd = FeedFoward(n_embd)
         self.ln1 = nn.LayerNorm(n_embd)
@@ -142,9 +142,9 @@ class GPTLanguageModel(nn.Module):
         # each token directly reads off the logits for the next token from a lookup table
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
         self.position_embedding_table = nn.Embedding(block_size, n_embd)
-        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)])
+        self.blocks = nn.Sequential(*[Block(n_embd, n_head=n_head) for _ in range(n_layer)]) # 堆叠 n_layer 个 Transformer Block
         self.ln_f = nn.LayerNorm(n_embd) # final layer norm
-        self.lm_head = nn.Linear(n_embd, vocab_size)
+        self.lm_head = nn.Linear(n_embd, vocab_size) # 向词表维度投影
 
         # better init, not covered in the original GPT video, but important, will cover in followup video
         self.apply(self._init_weights)
@@ -158,22 +158,23 @@ class GPTLanguageModel(nn.Module):
             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
     def forward(self, idx, targets=None):
+        # idx 是经过词表映射后的整型数据
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
-        tok_emb = self.token_embedding_table(idx) # (B,T,C)
-        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)
+        tok_emb = self.token_embedding_table(idx) # (B,T,C)， 每个token是一个C维向量，把离散的token id 映射为 连续向量
+        pos_emb = self.position_embedding_table(torch.arange(T, device=device)) # (T,C)， 给 Transformer 注入 序列顺序信息
         x = tok_emb + pos_emb # (B,T,C)
-        x = self.blocks(x) # (B,T,C)
-        x = self.ln_f(x) # (B,T,C)
-        logits = self.lm_head(x) # (B,T,vocab_size)
+        x = self.blocks(x) # (B,T,C) #经过堆叠的n_layer个transformer block
+        x = self.ln_f(x) # (B,T,C) #最终的layer norm ,在输出logits前稳定特征分布，gpt标准做法
+        logits = self.lm_head(x) # (B,T,vocab_size)， 把隐藏向量映射成 下一个 token 的 logits， 每个位置都是一个 vocab_size 分类问题
 
         if targets is None:
             loss = None
         else:
             B, T, C = logits.shape
-            logits = logits.view(B*T, C)
-            targets = targets.view(B*T)
+            logits = logits.view(B*T, C) # (B*T,vocab_size)
+            targets = targets.view(B*T) # （B*T）
             loss = F.cross_entropy(logits, targets)
 
         return logits, loss
